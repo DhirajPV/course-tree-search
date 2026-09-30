@@ -53,20 +53,18 @@ Observed on 29th September 2026 against
 - A successful response is a bare JSON array of `{ "id": integer, "name": string,
 "parent_id": integer }`, for example `{"id":88,"name":"Question 5.1","parent_id":87}`.
   No wrapper object and no other fields were seen.
-- `error` returns HTTP 400 with `{"detail":"Query invalid"}`. The app shows it as a
-  rejected term.
-- `Lab`, the term used in the brief's example, currently returns an empty array.
-  Single letters return most of the course: `a` 350 items, `e` 369, `i` 363; `Module`
-  344; `Question` 278; about 24 KB each.
-- Across those queries no response contained duplicate ids, missing parents or
-  cycles, and every item's ancestors were included. Nineteen names carry trailing
-  whitespace and are shown as sent.
-- Ids follow the course's authored order (Question 5.1 to 5.8 are ids 88 to 95) while
-  the order of items in a response does not, so siblings are sorted by id.
-- Responses vary between runs. `o` returned a non-array JSON body once and a normal
-  array minutes later; `Chemistry`, `Experiment` and `Colloidal` returned 504 with an
-  HTML body on the 28th. An `access-control-allow-origin: *` header was present for a
-  localhost origin on the 28th and absent on the 30th, so nothing depends on it.
+- `error` returns HTTP 400 with `{"detail":"Query invalid"}`.
+- An `access-control-allow-origin: *` header was present for a localhost origin
+  on the 28th and absent on the 30th, so nothing depends on it.
+- `o` returned a non-array JSON body once and a normal array minutes later.
+- At random the service answers 503 with
+  `{"detail":"Failed to search for unknown reason"}` or, after about seven
+  seconds, 504 with an HTML "Gateway Time-out" page, and some successful
+  responses arrive 1 to 4 seconds late.
+
+The id order, the empty result for `Lab`, the response sizes and the scan for
+duplicate ids, missing parents and cycles are under Run it and Decisions and
+assumptions.
 
 To reproduce:
 
@@ -74,7 +72,6 @@ To reproduce:
 B='https://coursetreesearch-service-sandbox.dev.tophat.com'
 curl -s -o /dev/null -w '%{http_code}\n' "$B/treesearch/?query=a"      # 404
 curl -s "$B/?query=a" | head -c 200; echo                              # bare array
-curl -s "$B/?query=Lab"; echo                                          # []
 curl -s -w '\n%{http_code}\n' "$B/?query=error"                        # {"detail":"Query invalid"} 400
 curl -s -D - -o /dev/null -H 'Origin: http://localhost:5173' "$B/?query=a" | grep -i access-control || echo 'no CORS header'
 ```
@@ -83,21 +80,25 @@ curl -s -D - -o /dev/null -H 'Origin: http://localhost:5173' "$B/?query=a" | gre
 
 ```
 src/
-  main.tsx                  mounts App inside StrictMode and loads styles.css
-  App.tsx                   builds the HTTP client once and renders the page around CourseSearch
-  App.test.tsx              journeys through the whole page
-  styles.css                colour tokens, dark mode, focus rings, the outline's indent and pre-wrap rows
-  vite-env.d.ts             types VITE_API_BASE_URL on import.meta.env
-  test/setup.ts             jest-dom matchers, cleanup after each test, and fetch stubbed to throw
-  test/setup.test.ts        checks that the setup file did both
+  main.tsx                  mounts the app in StrictMode and loads the stylesheet
+  App.tsx                   builds the HTTP client once and lays out the page
+  App.test.tsx              drives whole-page journeys, one of them through the real client
+  styles.css                colour tokens, dark mode, focus rings, and the outline's indent
+  vite-env.d.ts             declares the VITE_API_BASE_URL environment variable
+  test/setup.ts             registers matchers, cleans up after each test, and blocks the network
+  test/setup.test.ts        checks that the setup did both
   course-search/
-    types.ts                CourseItem, TreeNode, DataIssue, SearchErrorCode
-    client.ts               SearchClient, TreeSearchError, resolveBaseUrl, buildSearchUrl, parseResponse, createHttpSearchClient
-    tree.ts                 buildTree, prefixFor, formatOutline, descendantCount
-    useCourseSearch.ts      the reducer, the request contract and the hook
-    CourseSearch.tsx        the form; composes SearchResults
-    SearchResults.tsx       status line, alert, retained tree; exports messages and recoveryFor
-    TreeOutline.tsx         nested lists, one row per node
+    types.ts                the item, node, issue and error-code types everything below shares
+    client.ts               builds the request, enforces the timeout, merges cancellation,
+                            validates the response, and turns failures into typed errors
+    tree.ts                 turns the flat list into a tree, reports duplicates and cycles,
+                            sorts siblings by id, and writes the outline as text
+    useCourseSearch.ts      owns a search's lifecycle: starts, supersedes and cancels
+                            requests, and keeps the last result through loading and errors
+    CourseSearch.tsx        the form: trims the term and hands it to the hook
+    SearchResults.tsx       shows the status line, the alert with Try again, and the
+                            retained tree; holds the copy
+    TreeOutline.tsx         renders the tree as nested lists, one row per node
     *.test.ts, *.test.tsx   tests beside the file they cover
 ```
 
@@ -151,25 +152,12 @@ fields: the status decides the line above the tree and whether there is an
 alert, and `lastResult` decides whether a tree is shown at all.
 
 Requests are tracked outside React state, in a ref holding the active request
-`{ requestId, query, controller }` or null, beside an id counter and a
-disposed flag owned by a mount effect. The hook's header comment carries these
-rules:
-
-1. `search(q)`: if a request is active and `active.query === q`, do nothing.
-2. Otherwise, if disposed, do nothing. Else abort `active.controller`,
-   allocate an id, set active, dispatch `started`, and call
-   `client.search(q, controller.signal)`.
-3. A request clears active only if `active.requestId` is its own id.
-4. On settle, dispatch only if `active.requestId` is its own id and disposed is
-   false. Otherwise nothing.
-5. Effect setup sets disposed false; cleanup sets it true, takes and nulls
-   active, then aborts what it took. This survives StrictMode's setup, cleanup,
-   setup in development.
-6. After cleanup, a late settlement dispatches nothing.
-7. `retry()` reads the query from status and calls `search`.
-8. An `aborted` rejection is ignored only when this hook's own controller
-   signal is aborted. Any other aborted rejection settles as `unknown` and
-   releases active.
+`{ requestId, query, controller }`, an id counter and a disposed flag. A new
+search aborts the active one, and only the request that still holds its own
+id may clear it or dispatch, so a superseded, late or post-unmount settlement
+changes nothing, while an abort the hook did not issue is reported as
+`unknown` rather than ignored. The eight rules are in the header comment of
+`src/course-search/useCourseSearch.ts`.
 
 On success the items go through `buildTree`. Any issue dispatches `failed`
 with `unusable-data`; otherwise `succeeded` carries the roots. The reducer
@@ -276,64 +264,27 @@ colours come from tokens with a `prefers-color-scheme: dark` set.
 
 ## Testing
 
-`src/test/setup.ts` runs before every test file. It registers the jest-dom
-matchers, cleans up Testing Library renders after each test and replaces the
-global `fetch` with a function that throws, so a test that reaches for the
-network fails at once; every test injects a fetch or a fake client instead.
-`setup.test.ts` checks both halves of that.
+Tests sit beside the file they cover. Together they prove that the brief's
+example comes out as its seven lines; that the hierarchy policy holds row by
+row, including a missing parent, an id of 0, duplicates, cycles, sorting by
+numeric id and a chain five thousand deep; that the client maps every
+response and failure to the code in the table above, leaves a non-2xx body
+unread and clears its timer and abort listener after every outcome; that the
+hook follows its eight rules through superseded, late, post-unmount and
+foreign-abort settlements, StrictMode and retry, and that the reducer ignores
+stale actions; and that the page shows the retained tree, the attribution
+line, the alert, Try again with its focus move and the no-results line at the
+right moments.
 
-`tree.test.ts` walks the brief's example into its seven lines, checks the
-node shape, puts shuffled sandbox questions back in order and covers the
-hierarchy policy row by row: children arriving before parents, sorting of
-roots and siblings by numeric id, a parent missing from the list, an item with
-id 0 beside `parent_id` 0, identical duplicates collapsing, conflicting
-duplicates with a different name or parent, several conflicts reported once
-each in order, a two-node cycle with a child beneath it, a self-parent, two
-separate cycles in one issue, a conflict and a cycle from the same list, a
-chain five thousand deep, and a frozen input left unchanged. `prefixFor` and
-`descendantCount` have their own small groups.
-
-`client.test.ts` covers `resolveBaseUrl` (the override, a blank override, the
-dev and production defaults), `buildSearchUrl` (the root path, a base ending
-in a slash, characters that need encoding, a lone surrogate), `parseResponse`
-(the sandbox's bare array, trailing whitespace and id 0, unknown fields
-ignored, the index of the first bad item) and `createHttpSearchClient`: a 200,
-an empty array, each non-2xx status with the body left unread, a `TypeError`
-from fetch, a fetch that throws instead of rejecting, a 200 carrying HTML, an
-empty body, truncated JSON, an object or a wrongly shaped item, a term that
-cannot be encoded, aborts before the request, during the response and during
-the body read, a timeout while waiting for the response and during the body
-read, the ten-second default, a caller abort landing after the time ran out,
-and cleanup of the timer and the abort listener after every outcome.
-
-`useCourseSearch.test.ts` renders the hook against a fake client whose
-promises settle by hand. It checks loading to ready, the 400 code, one call
-for two identical searches in one tick, a second call once the first has
-settled, abort of a superseded search and the fate of its late result, a
-request that settles after unmount, a search made after unmount, StrictMode,
-an aborted rejection the hook did not cause, unusable data from a cyclic
-response, and retry. A table of stale actions checks that the reducer returns
-the identical object for each. The foreign-abort case checks rule 8: a
-client that rejects as aborted on its own settles as unknown and releases the
-request, so the next search goes through.
-
-`TreeOutline.test.tsx` checks that a child list is nested inside its parent's
-list item and that each row's text is the line `formatOutline` produces for
-it. `SearchResults.test.tsx` checks the attribution line over a retained tree
-while another query loads or has failed, its absence when the tree belongs to
-the current query, Try again for a service error, no Try again for an invalid
-query, and only the alert when the previous result was empty.
-`CourseSearch.test.tsx` checks that a blank or whitespace term cannot submit,
-that Enter submits the trimmed term, and that Try again moves focus to the
-field.
-
-`App.test.tsx` runs journeys through the whole page. With a fake client: the
-Lab tree with its attribution when Exam fails with a 500 and Try again
-refetching Exam, the rejected copy for a 400, a second search beating a slow
-first one and the late first result leaving it alone, and the no-results line
-for an empty list. One journey runs the real `createHttpSearchClient` with an
-injected fetch that answers a 504 HTML page and then the brief's fixture, and
-ends on the brief's seven lines and the summary.
+Three things keep the suite honest. `src/test/setup.ts` replaces the global
+`fetch` with a function that throws, so a test that reaches for the network
+fails at once and every test injects a fetch or a fake client instead. One
+journey in `App.test.tsx` runs the real `createHttpSearchClient` with an
+injected fetch that answers a 504 HTML page and then the brief's fixture, so
+transport, hook and page are exercised together. And the guards were checked
+by mutation: with the duplicate-search check, the disposed check, the
+foreign-abort condition, the non-2xx check or the missing-parent rule removed
+one at a time, the suite fails.
 
 ## Verified
 
@@ -400,20 +351,7 @@ path. No hosted deployment has been exercised.
 
 ## Process
 
-I used Claude for planning, review and implementation, and made the
-decisions. Three of them were made in planning: the summary counts items
-returned rather than matches, because the service returns context items; a
-failed search keeps the previous result on screen; and the structure had to
-leave room for a second feature. I designed around a written request
-contract and a result that survives loading and errors, and checked each
-part of it against the others. Looking at real data changed two decisions.
-Sibling order looked arbitrary, and ids turned out to follow the course's
-authored order, so siblings sort by id. A scan of the broad queries showed
-the corrupt cases the policy handles were not observed in the sampled
-responses, so the policy is documented as defensive. The design is one canonical tree, seven files, no telemetry and
-no contexts, on the standard that another engineer should understand the
-whole feature in one reading and I should be able to say why each piece
-exists.
+I used Claude for planning, review and implementation, and made the decisions. Before writing code I put the plan through several review passes, each against a deliberately hard bar, and revised after each one. Those passes changed more than the code's shape. The summary counts items returned rather than matches, because the service returns context items and the app cannot know why an item came back. A failed search keeps the previous result on screen, labelled with its own query. The import direction runs one way, with the client passed in rather than pulled from context. Data integrity became one policy instead of two: missing parents render as partial results, conflicting duplicates and cycles are rejected as unusable data, and nothing is silently repaired. The request lifecycle became a written contract with nine rules, including that dedupe reads a synchronous ref rather than render state, that a disposed flag is reset in effect setup so StrictMode cannot disable the hook, and that only this hook's own aborts are ignored. Errors are presented by what the student can do next. Claims were cut to what could be shown: the tests are named for what they observe, the complexity comment counts the sort, and the browser checks are dated evidence. Real data changed two more decisions: ids follow authored order in every sample, so siblings sort by id, and the corrupt cases the policy handles were not observed, so it is documented as defensive. The result is one canonical tree in seven files, no telemetry and no contexts, on the standard that another engineer should understand the whole feature in one reading and I should be able to say why each piece exists.
 
 The brief's endpoint returns 404 and the service root works, which opens the
 Sandbox behaviour section. The lifecycle contract test covers a foreign
