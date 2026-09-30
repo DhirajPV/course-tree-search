@@ -1,0 +1,191 @@
+:root {
+  color-scheme: light dark;
+
+  --color-bg: #ffffff;
+  --color-surface: #f5f6f8;
+  --color-text: #1b1f24;
+  --color-muted: #57606a;
+  --color-border: #6e7781;
+  --color-accent: #0b5fd1;
+  --color-on-accent: #ffffff;
+  --color-focus: #0b5fd1;
+  --color-error-bg: #fff1ee;
+  --color-error-border: #c4432b;
+  --color-error-text: #8a1f0b;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --radius: 0.375rem;
+  --tree-indent: 0.75rem;
+
+  --font-body: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #0f1419;
+    --color-surface: #1a2028;
+    --color-text: #e6edf3;
+    --color-muted: #9da7b3;
+    --color-border: #7d8590;
+    --color-accent: #6cb0ff;
+    --color-on-accent: #0f1419;
+    --color-focus: #6cb0ff;
+    --color-error-bg: #3a1712;
+    --color-error-border: #f0806c;
+    --color-error-text: #ffc2b8;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  line-height: 1.5;
+}
+
+.app {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-4);
+}
+
+h1 {
+  margin: 0 0 var(--space-6);
+  font-size: 1.5rem;
+  line-height: 1.25;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.search-form label {
+  display: block;
+  margin-bottom: var(--space-1);
+  font-weight: 600;
+}
+
+.search-controls {
+  display: flex;
+  gap: var(--space-2);
+}
+
+input,
+button {
+  font: inherit;
+}
+
+input[type='search'] {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+input[type='search']::placeholder {
+  color: var(--color-muted);
+}
+
+button {
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.results {
+  margin-top: var(--space-4);
+}
+
+/* Holds its line while empty so the results do not jump when text arrives. */
+.results-status {
+  min-height: 1.5em;
+  margin: 0 0 var(--space-3);
+  color: var(--color-muted);
+}
+
+.results-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-error-border);
+  border-radius: var(--radius);
+  background: var(--color-error-bg);
+  color: var(--color-error-text);
+}
+
+.results-error p {
+  margin: 0;
+}
+
+.tree {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  transition: opacity 150ms ease-out;
+}
+
+.tree[aria-busy='true'] {
+  opacity: 0.55;
+}
+
+.tree-attribution {
+  margin: 0 0 var(--space-2);
+  color: var(--color-muted);
+  font-size: 0.875rem;
+}
+
+.tree-level {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tree-level .tree-level {
+  padding-inline-start: var(--tree-indent);
+}
+
+/* pre-wrap shows names as sent (some carry extra spaces). The prefix and name
+   stay in one inline run so a copied row reads as the brief's line. */
+.tree-row {
+  padding: var(--space-1) 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tree-prefix {
+  color: var(--color-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tree {
+    transition: none;
+  }
+}
